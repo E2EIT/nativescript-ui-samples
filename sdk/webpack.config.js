@@ -1,8 +1,9 @@
-const { resolve, join  } = require("path");
+const { relative, resolve, join  } = require("path");
 
 const webpack = require("webpack");
 const nsWebpack = require("nativescript-dev-webpack");
 const nativescriptTarget = require("nativescript-dev-webpack/nativescript-target");
+const CleanWebpackPlugin = require("clean-webpack-plugin");
 const CopyWebpackPlugin = require("copy-webpack-plugin");
 const { BundleAnalyzerPlugin } = require("webpack-bundle-analyzer");
 const { NativeScriptWorkerPlugin } = require("nativescript-worker-loader/NativeScriptWorkerPlugin");
@@ -13,26 +14,56 @@ module.exports = env => {
     if (!platform) {
         throw new Error("You need to provide a target platform!");
     }
-    const platforms = ["ios", "android"];
-    const { snapshot, uglify, report } = env;
 
-    const nativeClassExtenders = [
-        join(__dirname, "app/main-activity.android.ts"),
-    ];
+    const platforms = ["ios", "android"];
+    const projectRoot = __dirname;
+    // Default destination inside platforms/<platform>/...
+    const dist = resolve(projectRoot, nsWebpack.getAppPath(platform));
+    const appResourcesPlatformDir = platform === "android" ? "Android" : "iOS";
+
+    const {
+        // The 'appPath' and 'appResourcesPath' values are fetched from
+        // the nsconfig.json configuration file
+        // when bundling with `tns run android|ios --bundle`.
+        appPath = "app",
+        appResourcesPath = "app/App_Resources",
+
+        // Snapshot, uglify and report can be enabled by providing
+        // the `--env.snapshot`, `--env.uglify` or `--env.report` flags
+        // when running 'tns run android|ios'
+        snapshot,
+        uglify,
+        report,
+    } = env;
+
+    const appFullPath = resolve(projectRoot, appPath);
+    const appResourcesFullPath = resolve(projectRoot, appResourcesPath);
+
+    const entryModule = nsWebpack.getEntryModule(appFullPath);
+    const entryPath = `./${entryModule}`;
+    const vendorPath = `./vendor`;
 
     const config = {
-        context: resolve("./app"),
+        mode: "development",
+        context: appFullPath,
+        watchOptions: {
+            ignored: [
+                appResourcesFullPath,
+                // Don't watch hidden files
+                "**/.*",
+            ]
+        },
         target: nativescriptTarget,
         entry: {
-            bundle: `./${nsWebpack.getEntryModule()}`,
-            vendor: "./vendor"
+            bundle: entryPath,
+            vendor: vendorPath,
         },
         output: {
             pathinfo: true,
-            // Default destination inside platforms/<platform>/...
-            path: resolve(nsWebpack.getAppPath(platform)),
+            path: dist,
             libraryTarget: "commonjs2",
             filename: "[name].js",
+            globalObject: "global",
         },
         resolve: {
             extensions: [".ts", ".js", ".scss", ".css"],
@@ -58,6 +89,29 @@ module.exports = env => {
             "setImmediate": false,
             "fs": "empty",
         },
+        devtool: "none",
+        optimization:  {
+            runtimeChunk: { name: "vendor" },
+            splitChunks: {
+                cacheGroups: {
+                    common: {
+                        name: "common",
+                        chunks: "all",
+                        test: /vendor/,
+                        enforce: true,
+                    },
+                }
+            },
+            minimize: !!uglify,
+            minimizer: [
+                // Override default minimizer to work around an Android issue by setting compress = false
+                new UglifyJsPlugin({
+                    uglifyOptions: {
+                        compress: platform !== "android"
+                    }
+                })
+            ],
+        },
         module: {
             rules: [
                 { test: /\.(html|xml)$/, use: "raw-loader" },
@@ -79,79 +133,88 @@ module.exports = env => {
             ]
         },
         plugins: [
-            // Vendor libs go to the vendor.js chunk
-            new webpack.optimize.CommonsChunkPlugin({
-                name: ["vendor"],
-            }),
             // Define useful constants like TNS_WEBPACK
             new webpack.DefinePlugin({
                 "global.TNS_WEBPACK": "true",
             }),
+            // Remove all files from the out dir.
+            new CleanWebpackPlugin([ `${dist}/**/*` ]),
+            // Copy native app resources to out dir.
+            new CopyWebpackPlugin([
+              {
+                from: `${appResourcesFullPath}/${appResourcesPlatformDir}`,
+                to: `${dist}/App_Resources/${appResourcesPlatformDir}`,
+                context: projectRoot
+              },
+            ]),
             // Copy assets to out dir. Add your own globs as needed.
             new CopyWebpackPlugin([
-                { from: "App_Resources/**" },
                 { from: "fonts/**" },
                 { from: "**/*.jpg" },
                 { from: "**/*.png" },
                 { from: "**/*.xml" },
                 { from: "**/person-model-2.json" },
                 { from: "**/person-metadata.json" },
-            ]),
+            ], { ignore: [`${relative(appPath, appResourcesFullPath)}/**`] }),
             // Generate a bundle starter script and activate it in package.json
             new nsWebpack.GenerateBundleStarterPlugin([
-                "./vendor",
-                "./bundle",
+                "./vendor", // install webpackJsonpCallback
+                "./common", // require app/vendor.js
+                "./bundle", // require the entry module (app/app.js)
             ]),
             // Support for web workers since v3.2
             new NativeScriptWorkerPlugin(),
             new nsWebpack.PlatformFSPlugin({
                 platform,
                 platforms,
-                // ignore: ["App_Resources"]
             }),
             // Does IPC communication with the {N} CLI to notify events when running in watch mode.
             new nsWebpack.WatchStateLoggerPlugin(),
         ],
     };
+
+    if (platform === "android") {
+        // Add your custom Activities, Services and other android app components here.
+        const appComponents = [
+            "tns-core-modules/ui/frame",
+            "tns-core-modules/ui/frame/activity",
+            resolve(__dirname, "app/main-activity.android.ts"),
+        ];
+
+        // Require all Android app components
+        // in the entry module (bundle.ts) and the vendor module (vendor.ts).
+        config.module.rules.unshift({
+            test: new RegExp(`${entryPath}.ts|${vendorPath}.ts`),
+            use: {
+                loader: "nativescript-dev-webpack/android-app-components-loader",
+                options: { modules: appComponents }
+            }
+        });
+    }
+
     if (report) {
         // Generate report files for bundles content
         config.plugins.push(new BundleAnalyzerPlugin({
             analyzerMode: "static",
             openAnalyzer: false,
             generateStatsFile: true,
-            reportFilename: join(__dirname, "report", `report.html`),
-            statsFilename: join(__dirname, "report", `stats.json`),
+            reportFilename: resolve(projectRoot, "report", `report.html`),
+            statsFilename: resolve(projectRoot, "report", `stats.json`),
         }));
     }
+
     if (snapshot) {
         config.plugins.push(new nsWebpack.NativeScriptSnapshotPlugin({
-            chunk: "vendor",
-            projectRoot: __dirname,
+            chunks: [
+                "common",
+                "vendor",
+            ],
+            projectRoot,
             webpackConfig: config,
             targetArchs: ["arm", "arm64", "ia32"],
-            tnsJavaClassesOptions: {
-                packages: [ "tns-core-modules" ],
-                modules: nativeClassExtenders,
-            },
             useLibs: false
         }));
     }
-    if (uglify) {
-        config.plugins.push(new webpack.LoaderOptionsPlugin({ minimize: true }));
 
-        // Work around an Android issue by setting compress = false
-        const compress = platform !== "android";
-        config.plugins.push(new UglifyJsPlugin({
-            uglifyOptions: {
-                mangle: { 
-                    reserved:  [
-                        ...nsWebpack.uglifyMangleExcludes,
-                        "AutoCompleteAdapter"
-                    ], 
-                },
-                compress,
-            },
-        }));
-    }
     return config;
 };
