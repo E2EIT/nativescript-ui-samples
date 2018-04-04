@@ -44,7 +44,7 @@
     "nativescript-dev-webpack": "github:nativescript/nativescript-dev-webpack#sis0k0/webpack4",
     "nativescript-worker-loader": "~0.8.1",
     "raw-loader": "~0.5.1",
-    "resolve-url-loader": "~2.2.1",
+    "resolve-url-loader": "~2.3.0",
     "tns-platform-declarations": "3.4.0",
     "typescript": "~2.7.2",
     "uglifyjs-webpack-plugin": "~1.2.4",
