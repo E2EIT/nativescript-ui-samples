@@ -88,6 +88,7 @@ module.exports = env => {
             "timers": false,
             "setImmediate": false,
             "fs": "empty",
+            "__dirname": false,
         },
         devtool: "none",
         optimization:  {
@@ -153,8 +154,10 @@ module.exports = env => {
                 { from: "**/*.jpg" },
                 { from: "**/*.png" },
                 { from: "**/*.xml" },
-                { from: "**/person-model-2.json" },
+                { from: "**/airports.json" },
                 { from: "**/person-metadata.json" },
+                { from: "**/person-model-2.json" },
+                { from: "**/user-metadata-validation.json" },
             ], { ignore: [`${relative(appPath, appResourcesFullPath)}/**`] }),
             // Generate a bundle starter script and activate it in package.json
             new nsWebpack.GenerateBundleStarterPlugin([
