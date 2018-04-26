@@ -18,8 +18,15 @@ module.exports = env => {
     const platforms = ["ios", "android"];
     const projectRoot = __dirname;
     // Default destination inside platforms/<platform>/...
-    const dist = resolve(projectRoot, nsWebpack.getAppPath(platform));
+    const dist = resolve(projectRoot, nsWebpack.getAppPath(platform, projectRoot));
     const appResourcesPlatformDir = platform === "android" ? "Android" : "iOS";
+
+    // Add your custom Activities, Services and other android app components here.
+    const appComponents = [
+        "tns-core-modules/ui/frame",
+        "tns-core-modules/ui/frame/activity",
+        resolve(__dirname, "app/main-activity.android.ts"),
+    ];
 
     const {
         // The 'appPath' and 'appResourcesPath' values are fetched from
@@ -95,12 +102,26 @@ module.exports = env => {
             runtimeChunk: { name: "vendor" },
             splitChunks: {
                 cacheGroups: {
+                    // common: {
+                    //     name: "common",
+                    //     chunks: "all",
+                    //     test: /vendor/,
+                    //     enforce: true,
+                    // },
+
+
                     common: {
                         name: "common",
                         chunks: "all",
-                        test: /vendor/,
+                        test: (module, chunks) => {
+                            const moduleName = module.nameForCondition ? module.nameForCondition() : '';
+                            return /[\\/]node_modules[\\/]/.test(moduleName) ||
+                                appComponents.some(c => c === moduleName);
+                        },
                         enforce: true,
                     },
+
+
                 }
             },
             minimize: !!uglify,
@@ -177,13 +198,6 @@ module.exports = env => {
     };
 
     if (platform === "android") {
-        // Add your custom Activities, Services and other android app components here.
-        const appComponents = [
-            "tns-core-modules/ui/frame",
-            "tns-core-modules/ui/frame/activity",
-            resolve(__dirname, "app/main-activity.android.ts"),
-        ];
-
         // Require all Android app components
         // in the entry module (bundle.ts) and the vendor module (vendor.ts).
         config.module.rules.unshift({
@@ -207,6 +221,7 @@ module.exports = env => {
     }
 
     if (snapshot) {
+        console.log("invoking the snapchat plugin ... ")
         config.plugins.push(new nsWebpack.NativeScriptSnapshotPlugin({
             chunks: [
                 "common",
